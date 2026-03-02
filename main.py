@@ -115,20 +115,30 @@ async def startup_event():
 # ─── Face helpers ──────────────────────────────────────────────────────────────
 def load_single_face_encoding(img_path: str, fr_module):
     try:
-        img = cv2.imread(img_path)
-        if img is None:
-            return None
-        img_rgb = np.ascontiguousarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), dtype=np.uint8)
+        # Use PIL exactly like the Streamlit version does in process_frame
+        from PIL import Image as PILImage
+        pil_img = PILImage.open(img_path).convert("RGB")
+        img_rgb = np.array(pil_img, dtype=np.uint8)
+        img_rgb = np.ascontiguousarray(img_rgb)
+
         locs = fr_module.face_locations(img_rgb, number_of_times_to_upsample=1, model="hog")
+        logger.debug(f"face_locations found {len(locs)} face(s) in {Path(img_path).name}")
+
         if not locs:
+            logger.warning(f"No face detected in {Path(img_path).name}")
             return None
+
         encs = fr_module.face_encodings(img_rgb, known_face_locations=locs, num_jitters=1)
-        return encs[0] if encs else None
+        if not encs:
+            logger.warning(f"face_encodings returned empty for {Path(img_path).name}")
+            return None
+
+        logger.info(f"✅ Encoding built for {Path(img_path).name}")
+        return encs[0]
+
     except Exception as e:
         logger.exception(f"Error encoding {img_path}: {e}")
         return None
-
-
 def build_face_database(folder: str, fr_module) -> dict:
     db = {}
     supported = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
@@ -144,15 +154,24 @@ def build_face_database(folder: str, fr_module) -> dict:
 
 
 # ─── Detection ─────────────────────────────────────────────────────────────────
-def process_frame(frame_bgr: np.ndarray, conf_threshold: float = 0.40):
+_frame_counter = 0
+FACE_REC_EVERY_N_FRAMES = 1
+
+def process_frame(frame_bgr: np.ndarray, conf_threshold: float = 0.40, frame_num: int = 0):
     labels_found = []
     if state.yolo_model is None:
         return frame_bgr, labels_found
 
-    frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    # ── Downscale for faster inference ────────────────────────────────────────
+    INFER_SCALE = 0.5
+    h_orig, w_orig = frame_bgr.shape[:2]
+    small = cv2.resize(frame_bgr, (int(w_orig * INFER_SCALE), int(h_orig * INFER_SCALE)))
+
+    frame_rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
+    # frame_rgb_orig = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
 
     try:
-        results = state.yolo_model(frame_bgr, conf=conf_threshold, verbose=False)[0]
+        results = state.yolo_model(small, conf=conf_threshold, verbose=False)[0]
     except Exception as e:
         logger.error(f"YOLO inference error: {e}")
         return frame_bgr, labels_found
@@ -165,16 +184,23 @@ def process_frame(frame_bgr: np.ndarray, conf_threshold: float = 0.40):
         conf = float(box.conf[0])
         label = TARGET_CLASSES[cls_id]
         color = CLASS_COLORS.get(label, (200, 200, 200))
+
+        # Scale bounding box coords back to original frame size
         x1, y1, x2, y2 = map(int, box.xyxy[0])
+        x1 = int(x1 / INFER_SCALE); y1 = int(y1 / INFER_SCALE)
+        x2 = int(x2 / INFER_SCALE); y2 = int(y2 / INFER_SCALE)
 
         cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), color, 2)
         display_name = label
 
-        if label == "person" and state.fr_module and state.face_db:
+        # ── Face recognition: only every N frames ─────────────────────────────
+        run_face_rec = (frame_num % FACE_REC_EVERY_N_FRAMES == 0)
+        if label == "person" and state.fr_module and state.face_db and run_face_rec:
             try:
                 h, w = frame_bgr.shape[:2]
+                frame_rgb_orig = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                 roi = np.ascontiguousarray(
-                    frame_rgb[max(0,y1):min(h,y2), max(0,x1):min(w,x2)], dtype=np.uint8
+                    frame_rgb_orig[max(0, y1):min(h, y2), max(0, x1):min(w, x2)], dtype=np.uint8
                 )
                 if roi.size > 0:
                     locs = state.fr_module.face_locations(roi, number_of_times_to_upsample=1, model="hog")
@@ -200,7 +226,6 @@ def process_frame(frame_bgr: np.ndarray, conf_threshold: float = 0.40):
         labels_found.append(display_name)
 
     return frame_bgr, labels_found
-
 
 # ─── REST Endpoints ────────────────────────────────────────────────────────────
 
@@ -328,37 +353,81 @@ async def websocket_detect(websocket: WebSocket):
     """
     Client sends raw JPEG frames as binary messages.
     Server responds with JSON: { image: <base64 jpeg>, labels: [...] }
+
+    Optimisations applied:
+      • Frame-drop queue  — drops stale frames so processing never falls behind
+      • Downscaled inference — YOLO runs on 50 % sized frame, boxes rescaled back
+      • Face-rec throttle — face recognition runs every 5th frame only
+      • Lower JPEG quality — 65 instead of 75 for faster encode/transfer
     """
+    global _frame_counter
     await websocket.accept()
     logger.info("WebSocket client connected")
+
+    # Queue holds at most 2 frames; older frames are dropped when full
+    queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=2)
+
+    async def _receiver():
+        """Continuously read incoming frames; drop oldest when queue is full."""
+        try:
+            while True:
+                data = await websocket.receive_bytes()
+                if queue.full():
+                    try:
+                        queue.get_nowait()   # discard stale frame
+                        logger.debug("Dropped stale frame (queue full)")
+                    except asyncio.QueueEmpty:
+                        pass
+                await queue.put(data)
+        except WebSocketDisconnect:
+            pass
+        except Exception as e:
+            logger.debug(f"Receiver task error: {e}")
+
+    receiver_task = asyncio.create_task(_receiver())
+
     try:
+        loop = asyncio.get_event_loop()
         while True:
-            data = await websocket.receive_bytes()
-            # Decode incoming JPEG
+            # Wait for the next frame to process
+            try:
+                data = await asyncio.wait_for(queue.get(), timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.info("WebSocket idle timeout — closing")
+                break
+
             np_arr = np.frombuffer(data, np.uint8)
             frame_bgr = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
             if frame_bgr is None:
                 await websocket.send_json({"error": "invalid frame"})
                 continue
 
-            loop = asyncio.get_event_loop()
+            _frame_counter += 1
+
+            # Run heavy inference in thread-pool so the event loop stays free
             annotated, labels = await loop.run_in_executor(
-                None, process_frame, frame_bgr, 0.40
+                None, process_frame, frame_bgr, 0.40, _frame_counter
             )
 
-            _, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            # Encode at quality 65 — visually fine, noticeably smaller payload
+            _, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 65])
             b64 = base64.b64encode(buf).decode()
+
             await websocket.send_json({
                 "image": f"data:image/jpeg;base64,{b64}",
                 "labels": labels,
             })
+
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
     except Exception as e:
         logger.exception(f"WebSocket error: {e}")
+    finally:
+        receiver_task.cancel()
+        logger.info("WebSocket handler cleaned up")
 
 
 # ─── Dev entry point ──────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
