@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Smart Vision AI</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f5f6fa;
+    --card: #ffffff;
+    --border: #d8d8ee;
+    --text: #1a1a2e;
+    --muted: #8888aa;
+    --accent1: #7b2ff7;
+    --accent2: #0066ff;
+    --radius: 12px;
+  }
+
+  body {
+    font-family: 'Syne', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Header ── */
+  header {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 32px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  header h1 {
+    font-size: 1.5rem;
+    font-weight: 800;
+    background: linear-gradient(90deg, var(--accent1), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .status-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: #ccc;
+    transition: background .3s;
+  }
+  .status-dot.ok   { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
+  .status-dot.warn { background: #f59e0b; }
+  .status-dot.err  { background: #ef4444; }
+
+  /* ── Layout ── */
+  .layout { display: flex; flex: 1; overflow: hidden; }
+
+  /* ── Sidebar ── */
+  aside {
+    width: 280px;
+    min-width: 240px;
+    background: var(--card);
+    border-right: 1px solid var(--border);
+    padding: 24px 16px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  aside h3 {
+    font-size: .78rem;
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: .8rem;
+    font-weight: 700;
+    margin: 3px;
+  }
+  .badge.person {
+    background: linear-gradient(90deg, var(--accent1), #f707a8);
+    color: #fff;
+    animation: pulse 2s infinite;
+  }
+  .badge.object {
+    background: linear-gradient(90deg, var(--accent2), #00aaff);
+    color: #fff;
+  }
+  .badge .remove {
+    cursor: pointer;
+    opacity: .7;
+    font-size: .9rem;
+  }
+  .badge .remove:hover { opacity: 1; }
+
+  @keyframes pulse {
+    0%,100%{ box-shadow: 0 0 6px #f707a8; }
+    50%{ box-shadow: 0 0 16px #f707a8; }
+  }
+
+  .dot-row { display: flex; align-items: center; gap: 8px; font-size: .85rem; }
+  .color-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* ── Tabs ── */
+  main { flex: 1; padding: 24px; overflow-y: auto; }
+
+  .tabs { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 24px; }
+  .tab-btn {
+    background: none;
+    border: none;
+    padding: 10px 20px;
+    font-family: inherit;
+    font-size: .95rem;
+    font-weight: 700;
+    color: var(--muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: all .2s;
+  }
+  .tab-btn.active {
+    color: var(--accent1);
+    border-bottom-color: var(--accent1);
+  }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.06);
+  }
+
+  /* ── Buttons ── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: .9rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all .2s;
+  }
+  .btn-primary {
+    background: linear-gradient(90deg, var(--accent1), var(--accent2));
+    color: #fff;
+  }
+  .btn-primary:hover { opacity: .85; transform: translateY(-1px); }
+  .btn-danger {
+    background: #fee2e2;
+    color: #dc2626;
+  }
+  .btn-danger:hover { background: #fecaca; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+
+  /* ── Camera ── */
+  .camera-wrap {
+    position: relative;
+    background: #000;
+    border-radius: var(--radius);
+    overflow: hidden;
+    max-width: 100%;
+    aspect-ratio: 16/9;
+  }
+  #localVideo, #annotatedCanvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  #localVideo { z-index: 1; }
+  #annotatedCanvas { z-index: 2; }
+
+  /* ── Image preview ── */
+  .img-row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .img-box {
+    flex: 1; min-width: 240px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #eee;
+  }
+  .img-box img { width: 100%; display: block; }
+  .img-box p { text-align: center; padding: 6px; font-size: .8rem; color: var(--muted); }
+
+  /* ── Upload zone ── */
+  .upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .2s;
+  }
+  .upload-zone:hover { border-color: var(--accent1); }
+  .upload-zone input { display: none; }
+  .upload-zone p { color: var(--muted); font-size: .9rem; margin-top: 8px; }
+
+  /* ── Progress / labels ── */
+  .detections-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 12px; }
+
+  .progress-bar {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--border);
+    overflow: hidden;
+    margin-top: 8px;
+  }
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent1), var(--accent2));
+    width: 0;
+    transition: width .3s;
+  }
+
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: #1a1a2e;
+    color: #fff;
+    padding: 12px 20px;
+    border-radius: 10px;
+    font-size: .88rem;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all .3s;
+    z-index: 999;
+    max-width: 320px;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+
+  @media (max-width: 640px) {
+    aside { display: none; }
+    header h1 { font-size: 1.1rem; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<header>
+  <div class="status-dot" id="statusDot"></div>
+  <h1>Smart Vision AI</h1>
+  <span id="statusText" style="font-size:.82rem;color:var(--muted);margin-left:auto;"></span>
+</header>
+
+<div class="layout">
+
+<!-- ── Sidebar ── -->
+<aside>
+  <div>
+    <h3>Known Persons</h3>
+    <div id="knownFacesList" style="margin-bottom:10px;"></div>
+
+    <label class="upload-zone" style="padding:16px;">
+      <input type="file" id="faceUpload" accept="image/*" multiple />
+      <div>📸</div>
+      <p>Upload face images<br><small>filename = person's name</small></p>
+    </label>
+    <div id="faceUploadStatus" style="font-size:.8rem;color:var(--muted);margin-top:6px;"></div>
+  </div>
+
+  <div>
+    <h3>Target Objects</h3>
+    <div id="targetList"></div>
+  </div>
+</aside>
+
+<!-- ── Main ── -->
+<main>
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="camera">📹 Live Camera</button>
+    <button class="tab-btn" data-tab="image">🖼️ Image</button>
+    <button class="tab-btn" data-tab="video">🎬 Video</button>
+  </div>
+
+  <!-- ── Tab: Camera ── -->
+  <div class="tab-panel active" id="tab-camera">
+    <div class="card">
+      <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
+        <button class="btn btn-primary" id="startCamBtn">▶ Start Camera</button>
+        <button class="btn btn-danger"  id="stopCamBtn" disabled>⏹ Stop</button>
+        <select id="camSelect" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-family:inherit;"></select>
+        <label style="display:flex;align-items:center;gap:6px;font-size:.85rem;">
+          <input type="checkbox" id="mirrorChk" checked /> Mirror
+        </label>
+      </div>
+
+      <div class="camera-wrap">
+        <video id="localVideo" autoplay playsinline muted></video>
+        <canvas id="annotatedCanvas"></canvas>
+      </div>
+
+      <div class="detections-row" id="cameraLabels"></div>
+
+      <div style="margin-top:12px;font-size:.8rem;color:var(--muted);">
+        ⚡ Frames sent every 200 ms via WebSocket — model runs on server
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Tab: Image ── -->
+  <div class="tab-panel" id="tab-image">
+    <div class="card">
+      <label class="upload-zone" id="imgDropZone">
+        <input type="file" id="imgFile" accept="image/*" />
+        <div style="font-size:2rem;">🖼️</div>
+        <p>Click or drag an image here</p>
+      </label>
+
+      <div style="margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <button class="btn btn-primary" id="detectImgBtn" disabled>🔍 Detect</button>
+        <label style="font-size:.85rem;">Confidence: <input type="range" id="imgConf" min="0.1" max="0.9" step="0.05" value="0.4" style="width:100px;" /> <span id="imgConfVal">40%</span></label>
+      </div>
+
+      <div class="progress-bar" id="imgProgress" style="display:none;margin-top:12px;"><div class="progress-fill" style="width:60%;"></div></div>
+
+      <div class="img-row" id="imgResults" style="margin-top:16px;"></div>
+      <div class="detections-row" id="imgLabels"></div>
+    </div>
+  </div>
+
+  <!-- ── Tab: Video ── -->
+  <div class="tab-panel" id="tab-video">
+    <div class="card">
+      <label class="upload-zone" id="vidDropZone">
+        <input type="file" id="vidFile" accept="video/*" />
+        <div style="font-size:2rem;">🎬</div>
+        <p>Click or drag a video here</p>
+      </label>
+
+      <div style="margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <button class="btn btn-primary" id="processVidBtn" disabled>🚀 Process Video</button>
+        <label style="font-size:.85rem;">Confidence: <input type="range" id="vidConf" min="0.1" max="0.9" step="0.05" value="0.4" style="width:100px;" /> <span id="vidConfVal">40%</span></label>
+      </div>
+
+      <div class="progress-bar" id="vidProgress" style="display:none;margin-top:12px;"><div class="progress-fill" id="vidProgressFill"></div></div>
+      <p id="vidStatus" style="font-size:.85rem;color:var(--muted);margin-top:8px;"></p>
+
+      <div id="vidDownload" style="margin-top:16px;"></div>
+    </div>
+  </div>
+
+</main>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+const API = "";   // same origin — adjust if hosting separately
+
+// ── Toast ──────────────────────────────────────────────────────────────────
+let toastTimer;
+function showToast(msg, duration=3000) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), duration);
+}
+
+// ── Status ─────────────────────────────────────────────────────────────────
+const CLASS_COLORS = {
+  "bottle":       "#00c8ff",
+  "person":       "#ff32c8",
+  "cell phone":   "#32ff96",
+  "laptop":       "#ffc800",
+  "potted plant": "#00ff50",
+};
+
+async function fetchStatus() {
+  try {
+    const r = await fetch(`${API}/api/status`);
+    const d = await r.json();
+    const dot = document.getElementById("statusDot");
+    const txt = document.getElementById("statusText");
+    if (!d.models_loaded) {
+      dot.className = "status-dot warn";
+      txt.textContent = "Loading models…";
+    } else if (d.yolo && d.face_recognition) {
+      dot.className = "status-dot ok";
+      txt.textContent = "YOLO ✅  Face Rec ✅";
+    } else {
+      dot.className = "status-dot warn";
+      txt.textContent = `YOLO:${d.yolo?'✅':'❌'}  FaceRec:${d.face_recognition?'✅':'❌'}`;
+    }
+    renderKnownFaces(d.known_faces);
+  } catch {
+    document.getElementById("statusDot").className = "status-dot err";
+    document.getElementById("statusText").textContent = "Server unreachable";
+  }
+}
+
+function renderKnownFaces(names) {
+  const el = document.getElementById("knownFacesList");
+  el.innerHTML = names.length
+    ? names.map(n => `
+        <span class="badge person">
+          ${n}
+          <span class="remove" onclick="deleteFace('${n}')" title="Remove">✕</span>
+        </span>`).join("")
+    : `<p style="font-size:.82rem;color:var(--muted);">No known faces yet</p>`;
+}
+
+function renderTargetList() {
+  const el = document.getElementById("targetList");
+  el.innerHTML = Object.entries(CLASS_COLORS).map(([cls, hex]) => `
+    <div class="dot-row">
+      <div class="color-dot" style="background:${hex};"></div>
+      <span>${cls.charAt(0).toUpperCase()+cls.slice(1)}</span>
+    </div>`).join("");
+}
+
+// ── Tabs ───────────────────────────────────────────────────────────────────
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById(`tab-${btn.dataset.tab}`).classList.add("active");
+  });
+});
+
+// ── Face upload ────────────────────────────────────────────────────────────
+document.getElementById("faceUpload").addEventListener("change", async function() {
+  if (!this.files.length) return;
+  const fd = new FormData();
+  for (const f of this.files) fd.append("files", f);
+  document.getElementById("faceUploadStatus").textContent = "Uploading…";
+  try {
+    const r = await fetch(`${API}/api/faces/upload`, { method: "POST", body: fd });
+    const d = await r.json();
+    if (r.ok) {
+      showToast(`✅ Enrolled: ${d.enrolled.join(", ") || "none"}`);
+      fetchStatus();
+    } else {
+      showToast(`❌ ${d.detail}`);
+    }
+  } catch (e) {
+    showToast("❌ Upload failed");
+  }
+  document.getElementById("faceUploadStatus").textContent = "";
+  this.value = "";
+});
+
+async function deleteFace(name) {
+  const r = await fetch(`${API}/api/faces/${encodeURIComponent(name)}`, { method: "DELETE" });
+  if (r.ok) { showToast(`🗑 Removed: ${name}`); fetchStatus(); }
+}
+
+// ── Camera + WebSocket ─────────────────────────────────────────────────────
+let stream, ws, camTimer;
+const video     = document.getElementById("localVideo");
+const canvas    = document.getElementById("annotatedCanvas");
+const ctx       = canvas.getContext("2d");
+const captureC  = document.createElement("canvas");
+const captureCtx = captureC.getContext("2d");
+
+async function populateCameras() {
+  try {
+    await navigator.mediaDevices.getUserMedia({ video: true });
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const sel = document.getElementById("camSelect");
+    sel.innerHTML = "";
+    devices.filter(d => d.kind === "videoinput").forEach((d, i) => {
+      const o = document.createElement("option");
+      o.value = d.deviceId;
+      o.textContent = d.label || `Camera ${i+1}`;
+      sel.appendChild(o);
+    });
+  } catch {}
+}
+
+document.getElementById("startCamBtn").addEventListener("click", async () => {
+  const deviceId = document.getElementById("camSelect").value;
+  const constraints = { video: deviceId ? { deviceId: { exact: deviceId } } : true, audio: false };
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+    video.srcObject = stream;
+    await video.play();
+
+    document.getElementById("startCamBtn").disabled = true;
+    document.getElementById("stopCamBtn").disabled = false;
+
+    // WebSocket
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    ws = new WebSocket(`${proto}://${location.host}/ws/detect`);
+    ws.binaryType = "arraybuffer";
+
+    ws.onopen = () => {
+      camTimer = setInterval(sendFrame, 200);
+    };
+    ws.onmessage = (e) => {
+      const d = JSON.parse(e.data);
+      if (d.image) drawAnnotated(d.image);
+      if (d.labels) updateCameraLabels(d.labels);
+    };
+    ws.onerror = () => showToast("WebSocket error");
+    ws.onclose = () => clearInterval(camTimer);
+  } catch (e) {
+    showToast(`Camera error: ${e.message}`);
+  }
+});
+
+document.getElementById("stopCamBtn").addEventListener("click", () => {
+  clearInterval(camTimer);
+  if (ws) ws.close();
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  video.srcObject = null;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  document.getElementById("startCamBtn").disabled = false;
+  document.getElementById("stopCamBtn").disabled = true;
+  document.getElementById("cameraLabels").innerHTML = "";
+});
+
+function sendFrame() {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !video.videoWidth) return;
+  captureC.width  = video.videoWidth;
+  captureC.height = video.videoHeight;
+  const mirror = document.getElementById("mirrorChk").checked;
+  if (mirror) {
+    captureCtx.save();
+    captureCtx.scale(-1, 1);
+    captureCtx.drawImage(video, -captureC.width, 0);
+    captureCtx.restore();
+  } else {
+    captureCtx.drawImage(video, 0, 0);
+  }
+  captureC.toBlob(blob => {
+    blob?.arrayBuffer().then(buf => ws.send(buf));
+  }, "image/jpeg", 0.7);
+}
+
+function drawAnnotated(dataUrl) {
+  const img = new Image();
+  img.onload = () => {
+    canvas.width  = video.videoWidth  || img.width;
+    canvas.height = video.videoHeight || img.height;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  };
+  img.src = dataUrl;
+}
+
+function updateCameraLabels(labels) {
+  const el = document.getElementById("cameraLabels");
+  const unique = [...new Set(labels)];
+  el.innerHTML = unique.map(l => {
+    const isPerson = !Object.values({
+      "bottle":true,"cell phone":true,"laptop":true,"potted plant":true
+    }).includes(true) || !["bottle","cell phone","laptop","potted plant"].includes(l);
+    const cls = (l === "person" || isPerson) ? "person" : "object";
+    return `<span class="badge ${cls}">${l}</span>`;
+  }).join("");
+}
+
+// ── Image detection ────────────────────────────────────────────────────────
+const imgFile = document.getElementById("imgFile");
+const detectImgBtn = document.getElementById("detectImgBtn");
+const imgConf = document.getElementById("imgConf");
+document.getElementById("imgConfVal").textContent = Math.round(imgConf.value*100)+"%";
+imgConf.addEventListener("input", () =>
+  document.getElementById("imgConfVal").textContent = Math.round(imgConf.value*100)+"%");
+
+imgFile.addEventListener("change", function() {
+  detectImgBtn.disabled = !this.files.length;
+  if (this.files[0]) {
+    const url = URL.createObjectURL(this.files[0]);
+    document.getElementById("imgResults").innerHTML = `
+      <div class="img-box"><img src="${url}" /><p>Original</p></div>
+      <div class="img-box" id="imgResultBox"><p style="padding:40px;text-align:center;color:var(--muted);">Result will appear here</p></div>`;
+  }
+});
+
+detectImgBtn.addEventListener("click", async () => {
+  const fd = new FormData();
+  fd.append("file", imgFile.files[0]);
+  fd.append("conf", imgConf.value);
+
+  document.getElementById("imgProgress").style.display = "block";
+  detectImgBtn.disabled = true;
+
+  try {
+    const r = await fetch(`${API}/api/detect/image`, { method: "POST", body: fd });
+    const d = await r.json();
+    document.getElementById("imgProgress").style.display = "none";
+    document.getElementById("imgResultBox").innerHTML = `<img src="${d.image}" /><p>Annotated</p>`;
+    const labels = d.unique || [];
+    document.getElementById("imgLabels").innerHTML = labels.map(l => {
+      const cls = ["bottle","cell phone","laptop","potted plant"].includes(l) ? "object" : "person";
+      return `<span class="badge ${cls}">${l}</span>`;
+    }).join("");
+    if (!labels.length) showToast("No target objects detected.");
+  } catch (e) {
+    showToast("Detection failed: " + e.message);
+    document.getElementById("imgProgress").style.display = "none";
+  }
+  detectImgBtn.disabled = false;
+});
+
+// ── Video detection ────────────────────────────────────────────────────────
+const vidFile = document.getElementById("vidFile");
+const processVidBtn = document.getElementById("processVidBtn");
+const vidConf = document.getElementById("vidConf");
+document.getElementById("vidConfVal").textContent = Math.round(vidConf.value*100)+"%";
+vidConf.addEventListener("input", () =>
+  document.getElementById("vidConfVal").textContent = Math.round(vidConf.value*100)+"%");
+
+vidFile.addEventListener("change", function() {
+  processVidBtn.disabled = !this.files.length;
+});
+
+processVidBtn.addEventListener("click", async () => {
+  const fd = new FormData();
+  fd.append("file", vidFile.files[0]);
+  fd.append("conf", vidConf.value);
+
+  processVidBtn.disabled = true;
+  document.getElementById("vidProgress").style.display = "block";
+  document.getElementById("vidProgressFill").style.width = "0%";
+  document.getElementById("vidStatus").textContent = "Uploading & processing… (this may take a while)";
+  document.getElementById("vidDownload").innerHTML = "";
+
+  // Animate progress while waiting
+  let pct = 0;
+  const pAnim = setInterval(() => {
+    pct = Math.min(pct + 1, 90);
+    document.getElementById("vidProgressFill").style.width = pct + "%";
+  }, 300);
+
+  try {
+    const r = await fetch(`${API}/api/detect/video`, { method: "POST", body: fd });
+    clearInterval(pAnim);
+    document.getElementById("vidProgressFill").style.width = "100%";
+
+    if (!r.ok) throw new Error(await r.text());
+
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const detections = r.headers.get("X-Detections") || "";
+
+    document.getElementById("vidStatus").textContent = `✅ Done! Detections: ${detections || "none"}`;
+    document.getElementById("vidDownload").innerHTML = `
+      <a href="${url}" download="annotated_video.mp4" class="btn btn-primary">⬇️ Download Annotated Video</a>
+      <video controls src="${url}" style="margin-top:12px;width:100%;border-radius:8px;"></video>`;
+  } catch (e) {
+    clearInterval(pAnim);
+    document.getElementById("vidStatus").textContent = "❌ Error: " + e.message;
+    showToast("Video processing failed");
+  }
+
+  document.getElementById("vidProgress").style.display = "none";
+  processVidBtn.disabled = false;
+});
+
+// ── Init ───────────────────────────────────────────────────────────────────
+renderTargetList();
+populateCameras();
+fetchStatus();
+setInterval(fetchStatus, 10000);
+</script>
+</body>
+</html>

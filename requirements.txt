@@ -1,0 +1,15 @@
+# Smart Vision AI — FastAPI
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9
+
+# Computer Vision
+opencv-python-headless>=4.9.0
+Pillow>=10.3.0
+numpy>=1.26.0
+
+# AI Models
+ultralytics>=8.2.0          # YOLOv8
+
+# Face Recognition (requires cmake + dlib; install separately on some systems)
+# pip install face-recognition
