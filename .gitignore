@@ -143,7 +143,8 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-
+libcusparse_lt-linux-aarch64-0.7.1.0-archive  
+libcusparse_lt-linux-aarch64-0.7.1.0-archive.tar.xz
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -211,3 +212,6 @@ yolov8m.pt
 yolov8x.pt
 yolov8n.pt
 yolov8s.pt
+yolov8x.cache
+yolov8x.engine
+yolov8x.onnx

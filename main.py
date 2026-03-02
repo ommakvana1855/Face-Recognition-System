@@ -82,7 +82,10 @@ def load_models():
     try:
         from ultralytics import YOLO
         state.yolo_model = YOLO("yolov8x.pt")
-        state.yolo_model.to("cuda")
+        # state.yolo_model = YOLO("yolov8x.engine")
+        # state.yolo_model.export(format="engine", device=0, int8=True)
+        # state.yolo_model = YOLO("yolov8x.engine")
+        # state.yolo_model.to("cuda")
         logger.info("YOLOv8 loaded ✅")
     except Exception as e:
         logger.error(f"YOLO load error: {e}")

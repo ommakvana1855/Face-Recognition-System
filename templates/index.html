@@ -297,10 +297,17 @@
     to   { opacity: 1; transform: translateY(0); }
   }
 
-  @media (max-width: 640px) {
-    .sidebar { display: none; }
-    .img-grid { grid-template-columns: 1fr; }
-  }
+  @media (max-width: 768px) {
+      .sidebar { 
+        display: block;
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid var(--gray-200);
+      }
+      .shell { flex-direction: column; }
+      .img-grid { grid-template-columns: 1fr; }
+      .main { padding: 12px; }
+    }
 </style>
 </head>
 <body>
@@ -431,7 +438,7 @@
 <div class="toast-wrap" id="toastWrap"></div>
 
 <script>
-const API = "";
+const API = window.location.origin;
 
 const CLASS_COLORS = {
   "bottle":       "#f97316",
@@ -462,12 +469,15 @@ async function fetchStatus() {
     } else {
       pill.className = "status-pill warn"; txt.textContent = "Partial load";
     }
-    document.getElementById("infoYolo").textContent = `YOLO: ${d.yolo ? "loaded" : "not found"}`;
-    document.getElementById("infoFace").textContent = `Face Rec: ${d.face_recognition ? "loaded" : "not found"}`;
+    const infoYolo = document.getElementById("infoYolo");
+        const infoFace = document.getElementById("infoFace");
+        if (infoYolo) infoYolo.textContent = `YOLO: ${d.yolo ? "loaded" : "not found"}`;
+        if (infoFace) infoFace.textContent = `Face Rec: ${d.face_recognition ? "loaded" : "not found"}`;
     renderKnownFaces(d.known_faces);
   } catch {
     document.getElementById("statusPill").className = "status-pill err";
-    document.getElementById("statusText").textContent = "Server unreachable";
+    document.getElementById("statusText").textContent = "Connecting…";
+    setTimeout(fetchStatus, 3000);
   }
 }
 
@@ -527,8 +537,6 @@ async function deleteFace(name) {
 }
 
 // Camera
-// REPLACE the camera section in your script
-
 let stream, ws, camTimer;
 const video = document.getElementById("localVideo");
 const canvas = document.getElementById("annotatedCanvas");
@@ -536,119 +544,74 @@ const ctx = canvas.getContext("2d");
 const cap = document.createElement("canvas");
 const capCtx = cap.getContext("2d");
 
-// ── Dual-loop architecture ──────────────────────────────────────────────────
-let sending = false;
-
-function startSendLoop() {
-  // Send as fast as possible — server queue drops stale frames anyway
-  // ~30fps capture loop using requestAnimationFrame
-  let lastSend = 0;
-  const SEND_INTERVAL = 150; // ~30fps
-
-  function loop(now) {
-    if (!sending) return;
-    if (now - lastSend >= SEND_INTERVAL) {
-      sendFrame();
-      lastSend = now;
-    }
-    requestAnimationFrame(loop);  // syncs to display refresh, never blocks
-  }
-  requestAnimationFrame(loop);
-}
-
-function sendFrame() {
-  if (!ws || ws.readyState !== WebSocket.OPEN || !video.videoWidth) return;
-  
-  // Downscale before sending — reduces network + server load significantly
-  const SEND_SCALE = 0.6;  // send at 60% resolution
-  cap.width  = Math.round(video.videoWidth  * SEND_SCALE);
-  cap.height = Math.round(video.videoHeight * SEND_SCALE);
-
-  if (document.getElementById("mirrorChk").checked) {
-    capCtx.save();
-    capCtx.scale(-1, 1);
-    capCtx.drawImage(video, -cap.width, 0, cap.width, cap.height);
-    capCtx.restore();
-  } else {
-    capCtx.drawImage(video, 0, 0, cap.width, cap.height);
-  }
-
-  cap.toBlob(b => {
-    if (b && ws.readyState === WebSocket.OPEN) {
-      ws.send(b);
-    }
-  }, "image/jpeg", 0.6);  // quality 0.6 — fast encode, small payload
-}
-
-// ── Display loop — renders annotated frames the moment they arrive ──────────
-let latestFrame = null;
-
-function startDisplayLoop() {
-  function loop() {
-    if (!sending) return;
-
-    if (latestFrame) {
-      canvas.width  = video.videoWidth  || canvas.width;
-      canvas.height = video.videoHeight || canvas.height;
-      ctx.drawImage(latestFrame, 0, 0, canvas.width, canvas.height);
-      latestFrame = null;
-    }
-    requestAnimationFrame(loop);
-  }
-  requestAnimationFrame(loop);
+async function populateCameras() {
+  try {
+    await navigator.mediaDevices.getUserMedia({ video: true });
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const sel = document.getElementById("camSelect");
+    devices.filter(d => d.kind === "videoinput").forEach((d, i) => {
+      const o = document.createElement("option");
+      o.value = d.deviceId;
+      o.textContent = d.label || `Camera ${i + 1}`;
+      sel.appendChild(o);
+    });
+  } catch {}
 }
 
 document.getElementById("startCamBtn").addEventListener("click", async () => {
   const deviceId = document.getElementById("camSelect").value;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
-      video: deviceId
-        ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
-        : { width: { ideal: 1280 }, height: { ideal: 720 } },
-      audio: false,
+      video: deviceId ? { deviceId: { exact: deviceId } } : true, audio: false
     });
     video.srcObject = stream;
     await video.play();
     document.getElementById("startCamBtn").disabled = true;
-    document.getElementById("stopCamBtn").disabled  = false;
+    document.getElementById("stopCamBtn").disabled = false;
 
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}/ws/detect`);
-
-    ws.onopen = () => {
-      sending = true;
-      startSendLoop();
-      startDisplayLoop();
-    };
-
+    ws.onopen = () => { camTimer = setInterval(sendFrame, 200); };
     ws.onmessage = e => {
       const d = JSON.parse(e.data);
-      if (d.image) {
-        // Don't draw immediately — store as latest frame, display loop handles it
-        const img = new Image();
-        img.onload = () => { latestFrame = img; };
-        img.src = d.image;
-      }
+      if (d.image) drawAnnotated(d.image);
       if (d.labels) renderDetections("cameraLabels", d.labels);
     };
-
     ws.onerror = () => showToast("WebSocket error");
-    ws.onclose = () => { sending = false; };
-
+    ws.onclose = () => clearInterval(camTimer);
   } catch (e) { showToast(`Camera error: ${e.message}`); }
 });
 
 document.getElementById("stopCamBtn").addEventListener("click", () => {
-  sending = false;
+  clearInterval(camTimer);
   if (ws) ws.close();
   if (stream) stream.getTracks().forEach(t => t.stop());
   video.srcObject = null;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  latestFrame = null;
   document.getElementById("startCamBtn").disabled = false;
-  document.getElementById("stopCamBtn").disabled  = true;
+  document.getElementById("stopCamBtn").disabled = true;
   document.getElementById("cameraLabels").innerHTML = "";
 });
+
+function sendFrame() {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !video.videoWidth) return;
+  cap.width = video.videoWidth; cap.height = video.videoHeight;
+  if (document.getElementById("mirrorChk").checked) {
+    capCtx.save(); capCtx.scale(-1, 1); capCtx.drawImage(video, -cap.width, 0); capCtx.restore();
+  } else { capCtx.drawImage(video, 0, 0); }
+  cap.toBlob(b => b?.arrayBuffer().then(buf => ws.send(buf)), "image/jpeg", 0.7);
+}
+
+function drawAnnotated(dataUrl) {
+  const img = new Image();
+  img.onload = () => {
+    canvas.width = video.videoWidth || img.width;
+    canvas.height = video.videoHeight || img.height;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  };
+  img.src = dataUrl;
+}
 
 // Image detection
 const imgConf = document.getElementById("imgConf");
