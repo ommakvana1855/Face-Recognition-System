@@ -73,7 +73,8 @@ class AppState:
     load_error: str = ""
 
 state = AppState()
-
+from concurrent.futures import ThreadPoolExecutor
+_executor = ThreadPoolExecutor(max_workers=3)
 
 def load_models():
     """Load YOLO and face_recognition models once at startup."""
@@ -81,6 +82,7 @@ def load_models():
     try:
         from ultralytics import YOLO
         state.yolo_model = YOLO("yolov8x.pt")
+        state.yolo_model.to("cuda")
         logger.info("YOLOv8 loaded ✅")
     except Exception as e:
         logger.error(f"YOLO load error: {e}")
@@ -155,7 +157,7 @@ def build_face_database(folder: str, fr_module) -> dict:
 
 # ─── Detection ─────────────────────────────────────────────────────────────────
 _frame_counter = 0
-FACE_REC_EVERY_N_FRAMES = 1
+FACE_REC_EVERY_N_FRAMES = 15
 
 def process_frame(frame_bgr: np.ndarray, conf_threshold: float = 0.40, frame_num: int = 0):
     labels_found = []
@@ -163,7 +165,7 @@ def process_frame(frame_bgr: np.ndarray, conf_threshold: float = 0.40, frame_num
         return frame_bgr, labels_found
 
     # ── Downscale for faster inference ────────────────────────────────────────
-    INFER_SCALE = 0.5
+    INFER_SCALE = 0.35
     h_orig, w_orig = frame_bgr.shape[:2]
     small = cv2.resize(frame_bgr, (int(w_orig * INFER_SCALE), int(h_orig * INFER_SCALE)))
 
@@ -375,7 +377,7 @@ async def websocket_detect(websocket: WebSocket):
                 if queue.full():
                     try:
                         queue.get_nowait()   # discard stale frame
-                        logger.debug("Dropped stale frame (queue full)")
+                        # logger.debug("Dropped stale frame (queue full)")
                     except asyncio.QueueEmpty:
                         pass
                 await queue.put(data)
@@ -405,18 +407,19 @@ async def websocket_detect(websocket: WebSocket):
             _frame_counter += 1
 
             # Run heavy inference in thread-pool so the event loop stays free
-            annotated, labels = await loop.run_in_executor(
-                None, process_frame, frame_bgr, 0.40, _frame_counter
-            )
+            annotated, labels = await loop.run_in_executor(_executor, process_frame, frame_bgr, 0.40, _frame_counter)
 
             # Encode at quality 65 — visually fine, noticeably smaller payload
             _, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 65])
             b64 = base64.b64encode(buf).decode()
 
-            await websocket.send_json({
-                "image": f"data:image/jpeg;base64,{b64}",
-                "labels": labels,
-            })
+            try:
+                await websocket.send_json({
+                    "image": f"data:image/jpeg;base64,{b64}",
+                    "labels": labels,
+                })
+            except Exception:
+                break
 
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
