@@ -1,3 +1,40 @@
+"""
+Search-Based Object Detection with All 80 YOLO Classes
+FastAPI Backend with dynamic class filtering
+"""
+
+import asyncio
+import base64
+import io
+import logging
+import os
+import sys
+import tempfile
+import shutil
+from pathlib import Path
+from typing import Optional, List
+from contextlib import asynccontextmanager
+
+import cv2
+import numpy as np
+from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect, HTTPException, Form, Query
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from PIL import Image
+from pydantic import BaseModel
+
+# ─── Logger ───────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] %(levelname)-8s %(name)s › %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler("search_detection.log", encoding="utf-8"),
+    ],
+)
+logger = logging.getLogger("SearchDetection")
+
 
 # ─── Face Recognition helpers ─────────────────────────────────────────────────
 def load_single_face_encoding(img_path: str, fr_module):
@@ -74,44 +111,6 @@ def load_models():
     _reload_known_folder()
     state.models_loaded = True
     logger.info("Model loading complete.")
-
-"""
-Search-Based Object Detection with All 80 YOLO Classes
-FastAPI Backend with dynamic class filtering
-"""
-
-import asyncio
-import base64
-import io
-import logging
-import os
-import sys
-import tempfile
-import shutil
-from pathlib import Path
-from typing import Optional, List
-from contextlib import asynccontextmanager
-
-import cv2
-import numpy as np
-from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect, HTTPException, Form, Query
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
-from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image
-from pydantic import BaseModel
-
-# ─── Logger ───────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] %(levelname)-8s %(name)s › %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("search_detection.log", encoding="utf-8"),
-    ],
-)
-logger = logging.getLogger("SearchDetection")
-
 # ─── Global state ─────────────────────────────────────────────────────────────
 class AppState:
     yolo_model = None
