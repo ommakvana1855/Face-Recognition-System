@@ -82,7 +82,8 @@ def load_models():
     try:
         from ultralytics import YOLO
         state.yolo_model = YOLO("yolov8x.pt")
-        # state.yolo_model = YOLO("yolov8x.engine")
+        # state.yolo_model = YOLO("Face-Recognition-System/yolo26x.pt")
+        # state.yolo_model = YOLO("yolov8x.engine", device="dla:0")
         # state.yolo_model.export(format="engine", device=0, int8=True)
         # state.yolo_model = YOLO("yolov8x.engine")
         # state.yolo_model.to("cuda")

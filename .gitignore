@@ -215,3 +215,4 @@ yolov8s.pt
 yolov8x.cache
 yolov8x.engine
 yolov8x.onnx
+yolov26x.pt
