@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Search-Based YOLO Detection</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --gray-50:  #f9fafb;
+    --gray-100: #f3f4f6;
+    --gray-200: #e5e7eb;
+    --gray-300: #d1d5db;
+    --gray-400: #9ca3af;
+    --gray-500: #6b7280;
+    --gray-700: #374151;
+    --gray-900: #111827;
+    --blue:     #2563eb;
+    --blue-h:   #1d4ed8;
+    --green:    #16a34a;
+    --red:      #dc2626;
+    --purple:   #9333ea;
+    --orange:   #ea580c;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--gray-900);
+    background: var(--gray-50);
+  }
+
+  /* ─── Topbar ─────────────────────────────────────────────────────────── */
+  .topbar {
+    height: 52px;
+    background: #fff;
+    border-bottom: 1px solid var(--gray-200);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .topbar-logo {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--gray-900);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .topbar-logo svg { color: var(--blue); }
+  .status-pill {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--gray-100);
+    border: 1px solid var(--gray-200);
+    border-radius: 20px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--gray-500);
+  }
+  .status-pill .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--gray-300);
+  }
+  .status-pill.ok .dot { background: var(--green); }
+
+  /* ─── Layout ──────────────────────────────────────────────────────────── */
+  .shell { display: flex; min-height: calc(100vh - 52px); }
+
+  /* ─── Sidebar ─────────────────────────────────────────────────────────── */
+  .sidebar {
+    width: 240px;
+    flex-shrink: 0;
+    background: #fff;
+    border-right: 1px solid var(--gray-200);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+  .sidebar-section h4 {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--gray-400);
+    margin-bottom: 8px;
+  }
+  .sidebar-section p {
+    font-size: 12px;
+    color: var(--gray-500);
+    line-height: 1.6;
+  }
+
+  .class-input {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--gray-300);
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: inherit;
+    margin-top: 8px;
+  }
+  .class-input:focus {
+    outline: none;
+    border-color: var(--blue);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+  }
+
+  .preset-btns {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+  .preset-btn {
+    padding: 4px 10px;
+    border: 1px solid var(--gray-300);
+    background: #fff;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .preset-btn:hover {
+    background: var(--gray-50);
+    border-color: var(--blue);
+    color: var(--blue);
+  }
+
+  /* ─── Face management ────────────────────────────────────────────────── */
+  .face-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--gray-100);
+    border: 1px solid var(--gray-200);
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 12px;
+    font-weight: 500;
+    margin: 2px;
+  }
+  .face-chip button {
+    background: none; border: none; cursor: pointer;
+    color: var(--gray-400); font-size: 13px; line-height: 1; padding: 0 2px;
+  }
+  .face-chip button:hover { color: var(--red); }
+
+  .upload-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 10px;
+    border: 1px dashed var(--gray-300);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--gray-500);
+    transition: border-color .15s, color .15s;
+    margin-top: 6px;
+  }
+  .upload-label:hover { border-color: var(--blue); color: var(--blue); }
+  .upload-label input { display: none; }
+
+  /* ─── Main content ────────────────────────────────────────────────────── */
+  .main { flex: 1; padding: 20px; overflow-y: auto; }
+
+  /* ─── Tabs ────────────────────────────────────────────────────────────── */
+  .tabs {
+    display: flex;
+    border-bottom: 1px solid var(--gray-200);
+    margin-bottom: 16px;
+  }
+  .tab-btn {
+    padding: 8px 16px;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--gray-500);
+    cursor: pointer;
+    transition: color .15s;
+  }
+  .tab-btn:hover { color: var(--gray-900); }
+  .tab-btn.active { color: var(--blue); border-bottom-color: var(--blue); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* ─── Cards ───────────────────────────────────────────────────────────── */
+  .card {
+    background: #fff;
+    border: 1px solid var(--gray-200);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  .card-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--gray-700);
+    margin-bottom: 12px;
+  }
+
+  /* ─── Buttons ─────────────────────────────────────────────────────────── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 7px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    font-family: inherit;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .btn-primary   { background: var(--blue);   color: #fff; border-color: var(--blue); }
+  .btn-primary:hover { background: var(--blue-h); border-color: var(--blue-h); }
+  .btn-secondary { background: #fff; color: var(--gray-700); border-color: var(--gray-300); }
+  .btn-secondary:hover { background: var(--gray-50); }
+  .btn-danger    { background: var(--red);    color: #fff; border-color: var(--red); }
+  .btn-danger:hover { background: #b91c1c; }
+  .btn-success   { background: var(--green);  color: #fff; border-color: var(--green); }
+  .btn:disabled  { opacity: .45; cursor: not-allowed; }
+
+  /* ─── Form controls ───────────────────────────────────────────────────── */
+  select {
+    padding: 6px 10px;
+    border: 1px solid var(--gray-300);
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: inherit;
+    background: #fff;
+    color: var(--gray-900);
+  }
+  input[type="range"] { width: 100px; accent-color: var(--blue); vertical-align: middle; }
+  input[type="text"]  {
+    padding: 7px 10px;
+    border: 1px solid var(--gray-300);
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: inherit;
+    background: #fff;
+    color: var(--gray-900);
+  }
+  input[type="text"]:focus {
+    outline: none;
+    border-color: var(--blue);
+    box-shadow: 0 0 0 3px rgba(37,99,235,.1);
+  }
+  .field-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .field-label { font-size: 12px; color: var(--gray-500); }
+
+  /* ─── RTSP URL input ──────────────────────────────────────────────────── */
+  .rtsp-url-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .rtsp-url-input {
+    flex: 1;
+    min-width: 220px;
+    padding: 7px 10px;
+    border: 1px solid var(--gray-300);
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  .rtsp-url-input:focus {
+    outline: none;
+    border-color: var(--blue);
+    box-shadow: 0 0 0 3px rgba(37,99,235,.1);
+  }
+
+  /* ─── RTSP status badge ───────────────────────────────────────────────── */
+  .rtsp-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    background: var(--gray-100);
+    border: 1px solid var(--gray-200);
+    color: var(--gray-500);
+  }
+  .rtsp-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--gray-300); }
+  .rtsp-badge.connected { background: #f0fdf4; border-color: #bbf7d0; color: var(--green); }
+  .rtsp-badge.connected .dot { background: var(--green); }
+  .rtsp-badge.error { background: #fef2f2; border-color: #fecaca; color: var(--red); }
+  .rtsp-badge.error .dot { background: var(--red); }
+
+  /* ─── FPS counter ─────────────────────────────────────────────────────── */
+  .fps-badge {
+    font-size: 11px;
+    color: var(--gray-400);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ─── Camera ──────────────────────────────────────────────────────────── */
+  .video-wrap {
+    position: relative;
+    background: var(--gray-900);
+    border-radius: 6px;
+    overflow: hidden;
+    aspect-ratio: 16/9;
+    max-width: 100%;
+  }
+  #localVideo, #annotatedCanvas {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: contain;
+  }
+  #localVideo { z-index: 1; }
+  #annotatedCanvas { z-index: 2; }
+
+  /* RTSP canvas is standalone */
+  .rtsp-video-wrap {
+    position: relative;
+    background: var(--gray-900);
+    border-radius: 6px;
+    overflow: hidden;
+    aspect-ratio: 16/9;
+    max-width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #rtspCanvas {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+  }
+  .rtsp-placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--gray-500);
+    font-size: 13px;
+  }
+  .rtsp-placeholder svg { color: var(--gray-600); opacity: .5; }
+
+  /* ─── Image preview ───────────────────────────────────────────────────── */
+  .img-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  .img-pane {
+    border: 1px solid var(--gray-200);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--gray-100);
+  }
+  .img-pane img { width: 100%; display: block; }
+  .img-pane-label {
+    font-size: 11px; font-weight: 500; color: var(--gray-500);
+    padding: 5px 8px; background: #fff; border-top: 1px solid var(--gray-200);
+  }
+  .img-pane-empty {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 120px; font-size: 12px; color: var(--gray-400);
+  }
+
+  /* ─── Detections ──────────────────────────────────────────────────────── */
+  .detections { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .det-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 10px; border-radius: 4px; font-size: 12px; font-weight: 500;
+    background: var(--gray-100); border: 1px solid var(--gray-200); color: var(--gray-700);
+  }
+  .det-tag .color-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+  /* ─── Alert ───────────────────────────────────────────────────────────── */
+  .alert { padding: 8px 12px; border-radius: 6px; font-size: 12px; margin-top: 8px; }
+  .alert-info    { background: #eff6ff; border: 1px solid #bfdbfe; color: #1d4ed8; }
+  .alert-warning { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+
+  /* ─── Toast ───────────────────────────────────────────────────────────── */
+  .toast-wrap { position: fixed; bottom: 20px; right: 20px; z-index: 999; display: flex; flex-direction: column; gap: 6px; }
+  .toast {
+    background: var(--gray-900); color: #fff; padding: 10px 14px;
+    border-radius: 6px; font-size: 12px; box-shadow: 0 4px 12px rgba(0,0,0,.15);
+    animation: slideIn .2s ease;
+  }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  @media (max-width: 768px) {
+    .sidebar { display: block; width: 100%; border-right: none; border-bottom: 1px solid var(--gray-200); }
+    .shell { flex-direction: column; }
+    .img-grid { grid-template-columns: 1fr; }
+    .main { padding: 12px; }
+    .rtsp-url-row { flex-direction: column; align-items: stretch; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-logo">
+    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M3 7V5a2 2 0 0 1 2-2h2M3 17v2a2 2 0 0 0 2 2h2m10-16h2a2 2 0 0 1 2 2v2m0 10v2a2 2 0 0 1-2 2h-2"/>
+    </svg>
+    Smart Vision AI
+  </div>
+  <div class="status-pill" id="statusPill">
+    <span class="dot"></span>
+    <span id="statusText">Loading…</span>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="sidebar-section">
+      <h4>Detection Classes</h4>
+      <p>Enter class names separated by commas (e.g., person, car, dog)</p>
+      <input type="text" id="classInput" class="class-input" placeholder="person, car, dog, cat..." autocomplete="off" />
+      <div id="classDropdown" style="position:relative;"></div>
+      <div class="preset-btns">
+        <button class="preset-btn" onclick="setPreset('person')">Person</button>
+        <button class="preset-btn" onclick="setPreset('person,car,bicycle,motorcycle')">Vehicles</button>
+        <button class="preset-btn" onclick="setPreset('person,dog,cat,bird')">People & Pets</button>
+        <button class="preset-btn" onclick="setPreset('laptop,cell phone,keyboard,mouse')">Electronics</button>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <h4>Face Recognition</h4>
+      <p style="font-size:12px;color:var(--gray-500);margin-bottom:8px;">Upload images to recognize specific people</p>
+      <div id="knownFacesList" style="margin-bottom:6px;"></div>
+      <label class="upload-label">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+        </svg>
+        Upload Faces
+        <input type="file" id="faceUpload" accept="image/*" multiple />
+      </label>
+      <small id="faceUploadMsg" style="font-size:10px;color:var(--gray-400);margin-top:4px;display:block;"></small>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="rtsp">📹 RTSP Camera</button>
+      <button class="tab-btn" data-tab="camera">🎥 Webcam</button>
+      <button class="tab-btn" data-tab="image">🖼 Image</button>
+      <button class="tab-btn" data-tab="video">🎞 Video</button>
+    </div>
+
+    <!-- ─── RTSP Tab ──────────────────────────────────────────────────── -->
+    <div class="tab-panel active" id="tab-rtsp">
+      <div class="card">
+        <div class="card-title" style="display:flex;align-items:center;gap:10px;">
+          RTSP / IP Camera Detection
+          <span class="rtsp-badge" id="rtspBadge"><span class="dot"></span><span id="rtspBadgeText">Disconnected</span></span>
+          <span class="fps-badge" id="rtspFps" style="margin-left:auto;"></span>
+        </div>
+
+        <!-- URL row -->
+        <div class="rtsp-url-row">
+          <input
+            type="text"
+            id="rtspUrl"
+            class="rtsp-url-input"
+            placeholder="rtsp://user:pass@192.168.1.100:554/stream1"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button class="btn btn-primary" id="rtspConnectBtn">Connect</button>
+          <button class="btn btn-danger"  id="rtspDisconnectBtn" disabled>Disconnect</button>
+        </div>
+
+        <!-- Quick presets -->
+        <!-- <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+          <span style="font-size:11px;color:var(--gray-400);align-self:center;">Examples:</span>
+          <button class="preset-btn" onclick="fillRtsp('rtsp://admin:admin@192.168.1.100:554/stream1')">Generic IP Cam</button>
+          <button class="preset-btn" onclick="fillRtsp('rtsp://admin:@192.168.1.108:554/h264Preview_01_main')">Hikvision</button>
+          <button class="preset-btn" onclick="fillRtsp('rtsp://admin:admin123@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0')">Dahua</button>
+          <button class="preset-btn" onclick="fillRtsp('rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mp4')">Test Stream</button>
+        </div> -->
+
+        <!-- Confidence + interval -->
+        <div class="field-row" style="margin-bottom:12px;">
+          <span class="field-label">Confidence:</span>
+          <input type="range" id="rtspConf" min="0.1" max="0.9" step="0.05" value="0.4" />
+          <span id="rtspConfVal" class="field-label">40%</span>
+          <span class="field-label" style="margin-left:12px;">Interval:</span>
+          <input type="range" id="rtspInterval" min="50" max="1000" step="50" value="200" />
+          <span id="rtspIntervalVal" class="field-label">200ms</span>
+
+          <button class="btn btn-secondary" id="rtspStartDetBtn" disabled style="margin-left:auto;">▶ Start Detection</button>
+          <button class="btn btn-secondary" id="rtspStopDetBtn"  disabled>⏹ Stop</button>
+        </div>
+
+        <!-- Canvas -->
+        <div class="rtsp-video-wrap" id="rtspVideoWrap">
+          <canvas id="rtspCanvas"></canvas>
+          <div class="rtsp-placeholder" id="rtspPlaceholder">
+            <svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+              <path d="M15 10l4.553-2.069A1 1 0 0 1 21 8.845v6.31a1 1 0 0 1-1.447.894L15 14M3 8a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8z"/>
+            </svg>
+            <span>Enter an RTSP URL and click Connect</span>
+          </div>
+        </div>
+
+        <div class="detections" id="rtspLabels"></div>
+
+        <!-- <div class="alert alert-info" style="margin-top:10px;">
+          The server connects directly to the RTSP stream. Your browser only receives annotated JPEG frames via WebSocket — no camera plugin needed.
+        </div> -->
+      </div>
+    </div>
+
+    <!-- ─── Browser Webcam Tab ────────────────────────────────────────── -->
+    <div class="tab-panel" id="tab-camera">
+      <div class="card">
+        <div class="card-title">Live Webcam Detection</div>
+        <div class="field-row" style="margin-bottom:12px;">
+          <button class="btn btn-primary" id="startCamBtn">Start</button>
+          <button class="btn btn-secondary" id="stopCamBtn" disabled>Stop</button>
+          <select id="camSelect"></select>
+          <label class="field-label" style="display:flex;align-items:center;gap:5px;">
+            <input type="checkbox" id="mirrorChk" checked /> Mirror
+          </label>
+        </div>
+        <div class="video-wrap">
+          <video id="localVideo" autoplay playsinline muted></video>
+          <canvas id="annotatedCanvas"></canvas>
+        </div>
+        <div class="detections" id="cameraLabels"></div>
+        <div class="alert alert-info" style="margin-top:10px;">
+          Frames are sent every 200 ms via WebSocket. Only specified classes will be detected.
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Image Tab ─────────────────────────────────────────────────── -->
+    <div class="tab-panel" id="tab-image">
+      <div class="card">
+        <div class="card-title">Image Detection</div>
+        <div class="field-row">
+          <input type="file" id="imgFile" accept="image/*" />
+          <span class="field-label">Confidence:</span>
+          <input type="range" id="imgConf" min="0.1" max="0.9" step="0.05" value="0.4" />
+          <span id="imgConfVal" class="field-label">40%</span>
+        </div>
+        <div class="field-row" style="margin-top: 12px;">
+          <button class="btn btn-primary" id="detectImgBtn" disabled>Detect Objects</button>
+        </div>
+        <div class="img-grid" id="imgResults"></div>
+        <div class="detections" id="imageLabels"></div>
+      </div>
+    </div>
+
+    <!-- ─── Video Tab ─────────────────────────────────────────────────── -->
+    <div class="tab-panel" id="tab-video">
+      <div class="card">
+        <div class="card-title">Video Detection</div>
+        <div class="field-row">
+          <input type="file" id="vidFile" accept="video/*" />
+          <span class="field-label">Confidence:</span>
+          <input type="range" id="vidConf" min="0.1" max="0.9" step="0.05" value="0.4" />
+          <span id="vidConfVal" class="field-label">40%</span>
+        </div>
+        <div class="field-row" style="margin-top: 12px;">
+          <button class="btn btn-primary" id="processVidBtn" disabled>Process Video</button>
+        </div>
+        <p id="vidStatus" style="font-size:12px;color:var(--gray-500);margin-top:6px;"></p>
+        <div id="vidDownload" style="margin-top:12px;"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script>
+// ─── YOLO 80 Classes ──────────────────────────────────────────────────────────
+const YOLO_CLASSES = [
+  "person","bicycle","car","motorcycle","airplane","bus","train","truck","boat","traffic light",
+  "fire hydrant","stop sign","parking meter","bench","bird","cat","dog","horse","sheep","cow",
+  "elephant","bear","zebra","giraffe","backpack","umbrella","handbag","tie","suitcase","frisbee",
+  "skis","snowboard","sports ball","kite","baseball bat","baseball glove","skateboard","surfboard",
+  "tennis racket","bottle","wine glass","cup","fork","knife","spoon","bowl","banana","apple",
+  "sandwich","orange","broccoli","carrot","hot dog","pizza","donut","cake","chair","couch",
+  "potted plant","bed","dining table","toilet","tv","laptop","mouse","remote","keyboard",
+  "cell phone","microwave","oven","toaster","sink","refrigerator","book","clock","vase",
+  "scissors","teddy bear","hair drier","toothbrush"
+];
+
+const API = window.location.origin;
+let classColors = {};
+
+// ─── Utils ────────────────────────────────────────────────────────────────────
+function showToast(msg) {
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = msg;
+  document.getElementById("toastWrap").appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+function rgbToHex(rgb) {
+  return `#${rgb.map(x => x.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function getSelectedClasses() {
+  const input = document.getElementById("classInput").value.trim();
+  if (!input) return [];
+  return input.split(",").map(c => c.trim()).filter(c => c);
+}
+
+function setPreset(classes) {
+  document.getElementById("classInput").value = classes;
+  showToast("Preset applied");
+}
+
+function fillRtsp(url) {
+  document.getElementById("rtspUrl").value = url;
+}
+
+// ─── Autocomplete ─────────────────────────────────────────────────────────────
+const classInput = document.getElementById("classInput");
+const dropdown   = document.getElementById("classDropdown");
+let activeDropdownIdx = -1, typingTimer;
+
+classInput.addEventListener("input", function() {
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(() => {
+    const val = this.value;
+    const lastComma = val.lastIndexOf(",");
+    const search = val.slice(lastComma + 1).trim().toLowerCase();
+    if (!search) { dropdown.innerHTML = ""; dropdown.style.display = "none"; return; }
+    const already = val.split(",").map(s => s.trim().toLowerCase());
+    const matches = YOLO_CLASSES.filter(c => c.toLowerCase().includes(search) && !already.includes(c.toLowerCase()));
+    if (!matches.length) { dropdown.innerHTML = ""; dropdown.style.display = "none"; return; }
+    dropdown.innerHTML = `<div style="position:absolute;left:0;right:0;z-index:10;background:#fff;border:1px solid #d1d5db;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.07);max-height:180px;overflow-y:auto;">${matches.map((c,i)=>`<div class="dropdown-item" data-idx="${i}" style="padding:7px 12px;cursor:pointer;font-size:13px;color:#374151;">${c}</div>`).join("")}</div>`;
+    dropdown.style.display = "block";
+    activeDropdownIdx = -1;
+  }, 200);
+});
+
+dropdown.addEventListener("mousedown", function(e) {
+  if (e.target.classList.contains("dropdown-item")) { selectDropdownItem(parseInt(e.target.dataset.idx)); e.preventDefault(); }
+});
+
+classInput.addEventListener("keydown", function(e) {
+  const items = dropdown.querySelectorAll(".dropdown-item");
+  if (!items.length || dropdown.style.display === "none") return;
+  if (e.key === "ArrowDown") { activeDropdownIdx = (activeDropdownIdx+1)%items.length; updateDropdownActive(items); e.preventDefault(); }
+  else if (e.key === "ArrowUp") { activeDropdownIdx = (activeDropdownIdx-1+items.length)%items.length; updateDropdownActive(items); e.preventDefault(); }
+  else if (e.key === "Enter" && activeDropdownIdx >= 0) { selectDropdownItem(activeDropdownIdx); e.preventDefault(); }
+});
+
+function updateDropdownActive(items) {
+  items.forEach((el,i) => { el.style.background = i===activeDropdownIdx?"#e5e7eb":"#fff"; });
+}
+
+function selectDropdownItem(idx) {
+  const val = classInput.value;
+  const lastComma = val.lastIndexOf(",");
+  const prefix = lastComma >= 0 ? val.slice(0, lastComma+1) : "";
+  const search = val.slice(lastComma+1).trim().toLowerCase();
+  const already = val.split(",").map(s=>s.trim().toLowerCase());
+  const matches = YOLO_CLASSES.filter(c => c.toLowerCase().includes(search) && !already.includes(c.toLowerCase()));
+  if (matches[idx]) {
+    classInput.value = prefix + matches[idx] + ", ";
+    classInput.focus();
+    dropdown.innerHTML = ""; dropdown.style.display = "none";
+  }
+}
+
+document.addEventListener("click", function(e) {
+  if (!dropdown.contains(e.target) && e.target !== classInput) { dropdown.innerHTML = ""; dropdown.style.display = "none"; }
+});
+
+// ─── Status ───────────────────────────────────────────────────────────────────
+async function fetchStatus() {
+  try {
+    const res = await fetch(`${API}/api/status`);
+    const d = await res.json();
+    const pill = document.getElementById("statusPill");
+    const txt  = document.getElementById("statusText");
+    if (!d.models_loaded) { pill.className="status-pill"; txt.textContent="Loading models…"; }
+    else if (d.yolo)       { pill.className="status-pill ok"; txt.textContent="Ready"; }
+    else                   { pill.className="status-pill"; txt.textContent="Model loading…"; }
+    classColors = d.class_colors || {};
+    if (d.known_faces !== undefined) renderKnownFaces(d.known_faces);
+  } catch(e) {
+    document.getElementById("statusText").textContent = "Connecting…";
+    setTimeout(fetchStatus, 3000);
+  }
+}
+
+function renderKnownFaces(names) {
+  const el = document.getElementById("knownFacesList");
+  if (!names || !names.length) { el.innerHTML='<small style="font-size:11px;color:var(--gray-400);">No faces enrolled</small>'; return; }
+  el.innerHTML = names.map(n=>`<div class="face-chip">${n}<button onclick="deleteFace('${n.replace(/'/g,"\\'")}')">×</button></div>`).join("");
+}
+
+async function deleteFace(name) {
+  try {
+    const r = await fetch(`${API}/api/faces/${encodeURIComponent(name)}`,{method:"DELETE"});
+    if(r.ok){ showToast("Removed: "+name); fetchStatus(); } else showToast("Delete failed");
+  } catch(e){ showToast("Delete failed"); }
+}
+
+// ─── Tabs ─────────────────────────────────────────────────────────────────────
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach(b=>b.classList.remove("active"));
+    document.querySelectorAll(".tab-panel").forEach(p=>p.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById(`tab-${btn.dataset.tab}`).classList.add("active");
+  });
+});
+
+// ─── Sliders ──────────────────────────────────────────────────────────────────
+["img","vid"].forEach(prefix => {
+  const s=document.getElementById(`${prefix}Conf`), d=document.getElementById(`${prefix}ConfVal`);
+  s.addEventListener("input",()=>{ d.textContent=Math.round(s.value*100)+"%"; });
+});
+
+const rtspConf = document.getElementById("rtspConf");
+const rtspConfVal = document.getElementById("rtspConfVal");
+rtspConf.addEventListener("input",()=>{ rtspConfVal.textContent=Math.round(rtspConf.value*100)+"%"; sendRtspConfig(); });
+
+const rtspInterval = document.getElementById("rtspInterval");
+const rtspIntervalVal = document.getElementById("rtspIntervalVal");
+rtspInterval.addEventListener("input",()=>{ rtspIntervalVal.textContent=rtspInterval.value+"ms"; sendRtspConfig(); });
+
+// ─── Detections render ────────────────────────────────────────────────────────
+function renderDetections(id, labels) {
+  const unique = [...new Set(labels)];
+  document.getElementById(id).innerHTML = unique.length === 0 ? "" : unique.map(label => {
+    const color = classColors[label] || [200,200,200];
+    return `<span class="det-tag"><span class="color-dot" style="background:${rgbToHex(color)}"></span>${label}</span>`;
+  }).join("");
+}
+
+// ─── RTSP ─────────────────────────────────────────────────────────────────────
+let rtspWs = null;
+let rtspDetecting = false;
+
+const rtspCanvas  = document.getElementById("rtspCanvas");
+const rtspCtx     = rtspCanvas.getContext("2d");
+const rtspPlaceholder = document.getElementById("rtspPlaceholder");
+
+function setRtspBadge(state, text) {
+  const b = document.getElementById("rtspBadge");
+  const t = document.getElementById("rtspBadgeText");
+  b.className = "rtsp-badge" + (state ? " "+state : "");
+  t.textContent = text;
+}
+
+function fillRtsp(url) {
+  document.getElementById("rtspUrl").value = url;
+}
+
+document.getElementById("rtspConnectBtn").addEventListener("click", async () => {
+  const url = document.getElementById("rtspUrl").value.trim();
+  if (!url) { showToast("Please enter an RTSP URL"); return; }
+
+  const btn = document.getElementById("rtspConnectBtn");
+  btn.disabled = true;
+  btn.textContent = "Connecting…";
+  setRtspBadge("", "Connecting…");
+
+  try {
+    const res = await fetch(`${API}/api/rtsp/connect`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ url })
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || "Connection failed");
+
+    setRtspBadge("connected", `Connected · ${d.width}×${d.height} @ ${Math.round(d.fps)}fps`);
+    document.getElementById("rtspDisconnectBtn").disabled = false;
+    document.getElementById("rtspStartDetBtn").disabled = false;
+    rtspPlaceholder.style.display = "none";
+    showToast(`✅ RTSP connected: ${d.width}×${d.height}`);
+  } catch(e) {
+    setRtspBadge("error", "Failed: " + e.message);
+    showToast("❌ " + e.message);
+    btn.disabled = false;
+  }
+  btn.textContent = "Connect";
+});
+
+document.getElementById("rtspDisconnectBtn").addEventListener("click", async () => {
+  stopRtspDetection();
+  await fetch(`${API}/api/rtsp/disconnect`, { method: "POST" });
+  setRtspBadge("", "Disconnected");
+  document.getElementById("rtspConnectBtn").disabled = false;
+  document.getElementById("rtspDisconnectBtn").disabled = true;
+  document.getElementById("rtspStartDetBtn").disabled = true;
+  rtspPlaceholder.style.display = "flex";
+  rtspCtx.clearRect(0, 0, rtspCanvas.width, rtspCanvas.height);
+  document.getElementById("rtspLabels").innerHTML = "";
+  document.getElementById("rtspFps").textContent = "";
+  showToast("RTSP disconnected");
+});
+
+document.getElementById("rtspStartDetBtn").addEventListener("click", () => {
+  startRtspDetection();
+});
+
+document.getElementById("rtspStopDetBtn").addEventListener("click", () => {
+  stopRtspDetection();
+});
+
+function startRtspDetection() {
+  if (rtspWs) rtspWs.close();
+
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  rtspWs = new WebSocket(`${proto}://${location.host}/ws/rtsp`);
+
+  rtspWs.onopen = () => {
+    rtspDetecting = true;
+    // Send initial config
+    rtspWs.send(JSON.stringify({
+      classes: getSelectedClasses(),
+      conf: parseFloat(rtspConf.value),
+      interval_ms: parseInt(rtspInterval.value)
+    }));
+    document.getElementById("rtspStartDetBtn").disabled = true;
+    document.getElementById("rtspStopDetBtn").disabled = false;
+    setRtspBadge("connected", "Detecting…");
+    showToast("🎯 RTSP detection started");
+  };
+
+  rtspWs.onmessage = (e) => {
+    const d = JSON.parse(e.data);
+    if (d.error) { showToast("⚠️ " + d.error); stopRtspDetection(); return; }
+    if (d.image) drawRtspFrame(d.image);
+    if (d.labels) renderDetections("rtspLabels", d.labels);
+    if (d.processing_fps !== undefined) {
+      document.getElementById("rtspFps").textContent =
+        `Detect: ${d.processing_fps} fps · Stream: ${d.stream_fps} fps`;
+    }
+  };
+
+  rtspWs.onerror = () => { showToast("WebSocket error"); stopRtspDetection(); };
+  rtspWs.onclose = () => { rtspDetecting = false; };
+}
+
+function stopRtspDetection() {
+  if (rtspWs) { rtspWs.close(); rtspWs = null; }
+  rtspDetecting = false;
+  document.getElementById("rtspStartDetBtn").disabled = false;
+  document.getElementById("rtspStopDetBtn").disabled = true;
+  // Check if still connected (just stopped detection)
+  fetch(`${API}/api/rtsp/status`).then(r=>r.json()).then(d=>{
+    if(d.connected) setRtspBadge("connected", `Connected · ${d.width}×${d.height}`);
+  }).catch(()=>{});
+}
+
+function sendRtspConfig() {
+  if (rtspWs && rtspWs.readyState === WebSocket.OPEN) {
+    rtspWs.send(JSON.stringify({
+      classes: getSelectedClasses(),
+      conf: parseFloat(rtspConf.value),
+      interval_ms: parseInt(rtspInterval.value)
+    }));
+  }
+}
+
+// Update config when class input changes
+classInput.addEventListener("change", sendRtspConfig);
+
+function drawRtspFrame(dataUrl) {
+  const img = new Image();
+  img.onload = () => {
+    rtspCanvas.width  = img.width;
+    rtspCanvas.height = img.height;
+    rtspCtx.drawImage(img, 0, 0);
+  };
+  img.src = dataUrl;
+}
+
+// ─── Browser Webcam ───────────────────────────────────────────────────────────
+let stream, ws, camTimer;
+const video  = document.getElementById("localVideo");
+const canvas = document.getElementById("annotatedCanvas");
+const ctx    = canvas.getContext("2d");
+const cap    = document.createElement("canvas");
+const capCtx = cap.getContext("2d");
+
+async function populateCameras() {
+  try {
+    await navigator.mediaDevices.getUserMedia({ video: true });
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const sel = document.getElementById("camSelect");
+    devices.filter(d=>d.kind==="videoinput").forEach((d,i)=>{
+      const o=document.createElement("option"); o.value=d.deviceId; o.textContent=d.label||`Camera ${i+1}`; sel.appendChild(o);
+    });
+  } catch(e) {}
+}
+
+document.getElementById("startCamBtn").addEventListener("click", async () => {
+  const deviceId = document.getElementById("camSelect").value;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: deviceId?{deviceId:{exact:deviceId}}:true, audio:false
+    });
+    video.srcObject = stream;
+    await video.play();
+    document.getElementById("startCamBtn").disabled = true;
+    document.getElementById("stopCamBtn").disabled  = false;
+
+    const proto = location.protocol==="https:"?"wss":"ws";
+    ws = new WebSocket(`${proto}://${location.host}/ws/detect`);
+    ws.onopen = () => { showToast("Webcam started"); camTimer=setInterval(sendFrame,200); };
+    ws.onmessage = (e) => {
+      const d=JSON.parse(e.data);
+      if(d.error){ console.error(d.error); return; }
+      if(d.image) drawAnnotated(d.image);
+      if(d.labels) renderDetections("cameraLabels",d.labels);
+    };
+    ws.onerror = ()=>showToast("WebSocket error");
+    ws.onclose = ()=>clearInterval(camTimer);
+  } catch(e) { showToast(`Camera error: ${e.message}`); }
+});
+
+document.getElementById("stopCamBtn").addEventListener("click", () => {
+  clearInterval(camTimer);
+  if(ws) ws.close();
+  if(stream) stream.getTracks().forEach(t=>t.stop());
+  video.srcObject = null;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  document.getElementById("startCamBtn").disabled = false;
+  document.getElementById("stopCamBtn").disabled  = true;
+  document.getElementById("cameraLabels").innerHTML = "";
+  showToast("Webcam stopped");
+});
+
+function sendFrame() {
+  if(!ws||ws.readyState!==WebSocket.OPEN||!video.videoWidth) return;
+  cap.width=video.videoWidth; cap.height=video.videoHeight;
+  if(document.getElementById("mirrorChk").checked){
+    capCtx.save(); capCtx.scale(-1,1); capCtx.drawImage(video,-cap.width,0); capCtx.restore();
+  } else { capCtx.drawImage(video,0,0); }
+  cap.toBlob(blob=>{
+    if(!blob) return;
+    const reader=new FileReader();
+    reader.onload=()=>{ ws.send(JSON.stringify({frame:reader.result,classes:getSelectedClasses(),conf:0.4})); };
+    reader.readAsDataURL(blob);
+  },"image/jpeg",0.7);
+}
+
+function drawAnnotated(dataUrl) {
+  const img=new Image();
+  img.onload=()=>{ canvas.width=video.videoWidth||img.width; canvas.height=video.videoHeight||img.height; ctx.clearRect(0,0,canvas.width,canvas.height); ctx.drawImage(img,0,0,canvas.width,canvas.height); };
+  img.src=dataUrl;
+}
+
+// ─── Image detection ──────────────────────────────────────────────────────────
+document.getElementById("imgFile").addEventListener("change", function() {
+  document.getElementById("detectImgBtn").disabled = !this.files.length;
+  if(this.files[0]){
+    const url=URL.createObjectURL(this.files[0]);
+    document.getElementById("imgResults").innerHTML=`<div class="img-pane"><img src="${url}"/><div class="img-pane-label">Original</div></div><div class="img-pane" id="imgResultPane"><div class="img-pane-empty">Result will appear here</div></div>`;
+    document.getElementById("imageLabels").innerHTML="";
+  }
+});
+
+document.getElementById("detectImgBtn").addEventListener("click", async () => {
+  const classes=getSelectedClasses();
+  if(!classes.length){ showToast("⚠️ Please enter at least one class"); return; }
+  const fd=new FormData();
+  fd.append("file",document.getElementById("imgFile").files[0]);
+  fd.append("conf",document.getElementById("imgConf").value);
+  fd.append("classes",classes.join(","));
+  document.getElementById("detectImgBtn").disabled=true;
+  try {
+    const res=await fetch(`${API}/api/detect/image`,{method:"POST",body:fd});
+    const d=await res.json();
+    document.getElementById("imgResultPane").innerHTML=`<img src="${d.image}" style="width:100%;display:block;"/><div class="img-pane-label">Detected</div>`;
+    renderDetections("imageLabels",d.labels||[]);
+    showToast(d.unique.length?`Detected ${d.unique.length} class(es)`:"No objects detected");
+  } catch(e){ showToast("Detection failed: "+e.message); }
+  document.getElementById("detectImgBtn").disabled=false;
+});
+
+// ─── Video detection ──────────────────────────────────────────────────────────
+document.getElementById("vidFile").addEventListener("change", function() {
+  document.getElementById("processVidBtn").disabled=!this.files.length;
+});
+
+document.getElementById("processVidBtn").addEventListener("click", async () => {
+  const classes=getSelectedClasses();
+  if(!classes.length){ showToast("⚠️ Please enter at least one class"); return; }
+  const fd=new FormData();
+  fd.append("file",document.getElementById("vidFile").files[0]);
+  fd.append("conf",document.getElementById("vidConf").value);
+  fd.append("classes",classes.join(","));
+  document.getElementById("processVidBtn").disabled=true;
+  document.getElementById("vidStatus").textContent="Processing video… this may take a while.";
+  document.getElementById("vidDownload").innerHTML="";
+  try {
+    const res=await fetch(`${API}/api/detect/video`,{method:"POST",body:fd});
+    if(!res.ok) throw new Error(await res.text());
+    const blob=await res.blob();
+    const url=URL.createObjectURL(blob);
+    document.getElementById("vidStatus").textContent=`Done. Detections: ${res.headers.get("X-Detections")||"none"}`;
+    document.getElementById("vidDownload").innerHTML=`<a href="${url}" download="annotated_video.mp4" class="btn btn-primary" style="text-decoration:none;display:inline-flex;">Download Annotated Video</a><video controls src="${url}" style="width:100%;border-radius:6px;border:1px solid var(--gray-200);display:block;margin-top:8px;"></video>`;
+    showToast("Video processing complete");
+  } catch(e){ document.getElementById("vidStatus").textContent="Error: "+e.message; showToast("Video processing failed"); }
+  document.getElementById("processVidBtn").disabled=false;
+});
+
+// ─── Face upload ──────────────────────────────────────────────────────────────
+document.getElementById("faceUpload").addEventListener("change", async function() {
+  if(!this.files.length) return;
+  const fd=new FormData();
+  for(const f of this.files) fd.append("files",f);
+  document.getElementById("faceUploadMsg").textContent="Uploading…";
+  try {
+    const r=await fetch(`${API}/api/faces/upload`,{method:"POST",body:fd});
+    const d=await r.json();
+    showToast(d.enrolled?.length?`✅ Enrolled: ${d.enrolled.join(", ")}`:"⚠️ No faces detected");
+    fetchStatus();
+  } catch(e){ showToast("Upload failed"); }
+  document.getElementById("faceUploadMsg").textContent="";
+  this.value="";
+});
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+populateCameras();
+fetchStatus();
+setInterval(fetchStatus, 15000);
+</script>
+</body>
+</html>

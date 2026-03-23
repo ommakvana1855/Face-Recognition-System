@@ -1,6 +1,6 @@
 """
-Search-Based Object Detection with All 80 YOLO Classes
-FastAPI Backend with dynamic class filtering
+Search-Based Object Detection with YOLOE Text-Prompt Detection
+FastAPI Backend with dynamic text-prompt class filtering
 """
 
 import asyncio
@@ -35,6 +35,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger("SearchDetection")
 
+# ─── Global state ─────────────────────────────────────────────────────────────
+class AppState:
+    yoloe_model = None           # Base YOLOE model (reused across requests)
+    fr_module = None             # face_recognition module
+    face_db: dict = {}           # Known face encodings
+    models_loaded = False
+    load_error: str = ""
+    _current_classes: List[str] = []   # Classes the model is currently set to
+    _text_pe_cache: dict = {}          # Cache: frozenset(classes) → text_pe tensor
+
+state = AppState()
+
+from concurrent.futures import ThreadPoolExecutor
+_executor = ThreadPoolExecutor(max_workers=3)
 
 # ─── Face Recognition helpers ─────────────────────────────────────────────────
 def load_single_face_encoding(img_path: str, fr_module):
@@ -87,17 +101,18 @@ def _reload_known_folder(folder="known_persons"):
         logger.info(f"Loaded {len(state.face_db)} known face(s) from '{folder}'")
 
 
-# ─── Model loader ───────────────────────────────────────────────────────────
+# ─── Model loader ────────────────────────────────────────────────────────────
 def load_models():
-    """Load YOLO and face_recognition models once at startup."""
+    """Load YOLOE and face_recognition models once at startup."""
     logger.info("Loading AI models…")
     try:
-        from ultralytics import YOLO
-        state.yolo_model = YOLO("yolov8x.pt")
-        logger.info("YOLOv8 loaded ✅")
+        from ultralytics import YOLOE
+        # Load base YOLOE model — no classes baked in yet
+        state.yoloe_model = YOLOE("yoloe-26x-seg.pt")
+        logger.info("YOLOE loaded ✅")
     except Exception as e:
-        logger.error(f"YOLO load error: {e}")
-        state.load_error += f"YOLO: {e}. "
+        logger.error(f"YOLOE load error: {e}")
+        state.load_error += f"YOLOE: {e}. "
 
     try:
         import face_recognition as _fr
@@ -107,41 +122,61 @@ def load_models():
         logger.warning(f"face_recognition load error: {e}")
         state.load_error += f"FaceRec: {e}. "
 
-    # Load known persons folder
     _reload_known_folder()
     state.models_loaded = True
     logger.info("Model loading complete.")
-# ─── Global state ─────────────────────────────────────────────────────────────
-class AppState:
-    yolo_model = None
-    fr_module = None  # face_recognition module
-    face_db: dict = {}  # Known face encodings
-    models_loaded = False
-    load_error: str = ""
-    active_filters: set = set()  # Classes to detect
-
-state = AppState()
 
 
-from concurrent.futures import ThreadPoolExecutor
-_executor = ThreadPoolExecutor(max_workers=3)
+def _get_text_pe(names: List[str]):
+    """
+    Return cached text positional embeddings for `names`, computing them only
+    once per unique set of class names.
+    """
+    key = frozenset(names)
+    if key not in state._text_pe_cache:
+        logger.info(f"Computing text embeddings for: {names}")
+        state._text_pe_cache[key] = state.yoloe_model.get_text_pe(names)
+    return state._text_pe_cache[key]
+
+
+def _configure_model_for_classes(names: List[str]):
+    """
+    Reconfigure the YOLOE model for a new set of text-prompt classes.
+    Uses caching to avoid redundant embedding computation.
+    """
+    if names == state._current_classes:
+        return  # Already configured — no-op
+
+    text_pe = _get_text_pe(names)
+    state.yoloe_model.set_classes(names, text_pe)
+    state._current_classes = list(names)
+    logger.info(f"YOLOE reconfigured for classes: {names}")
+
+
+# ─── Color generation ─────────────────────────────────────────────────────────
+_color_cache: dict = {}
+
+def get_class_color(class_name: str) -> tuple:
+    """Return a consistent color for a class name (generated on demand)."""
+    if class_name not in _color_cache:
+        # Deterministic color from class name hash
+        rng = np.random.RandomState(abs(hash(class_name)) % (2**31))
+        _color_cache[class_name] = tuple(rng.randint(50, 255, 3).tolist())
+    return _color_cache[class_name]
 
 
 # ─── Lifespan context manager ─────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, load_models)
     yield
-    # Shutdown (cleanup if needed)
-    pass
 
 
 # ─── App ──────────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="Search-Based Object Detection", 
-    version="1.0.0",
+    title="YOLOE Text-Prompt Object Detection",
+    version="2.0.0",
     lifespan=lifespan
 )
 
@@ -152,102 +187,65 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ─── All 80 COCO Classes ──────────────────────────────────────────────────────
-ALL_YOLO_CLASSES = {
-    0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 4: "airplane",
-    5: "bus", 6: "train", 7: "truck", 8: "boat", 9: "traffic light",
-    10: "fire hydrant", 11: "stop sign", 12: "parking meter", 13: "bench", 14: "bird",
-    15: "cat", 16: "dog", 17: "horse", 18: "sheep", 19: "cow",
-    20: "elephant", 21: "bear", 22: "zebra", 23: "giraffe", 24: "backpack",
-    25: "umbrella", 26: "handbag", 27: "tie", 28: "suitcase", 29: "frisbee",
-    30: "skis", 31: "snowboard", 32: "sports ball", 33: "kite", 34: "baseball bat",
-    35: "baseball glove", 36: "skateboard", 37: "surfboard", 38: "tennis racket", 39: "bottle",
-    40: "wine glass", 41: "cup", 42: "fork", 43: "knife", 44: "spoon",
-    45: "bowl", 46: "banana", 47: "apple", 48: "sandwich", 49: "orange",
-    50: "broccoli", 51: "carrot", 52: "hot dog", 53: "pizza", 54: "donut",
-    55: "cake", 56: "chair", 57: "couch", 58: "potted plant", 59: "bed",
-    60: "dining table", 61: "toilet", 62: "tv", 63: "laptop", 64: "mouse",
-    65: "remote", 66: "keyboard", 67: "cell phone", 68: "microwave", 69: "oven",
-    70: "toaster", 71: "sink", 72: "refrigerator", 73: "book", 74: "clock",
-    75: "vase", 76: "scissors", 77: "teddy bear", 78: "hair drier", 79: "toothbrush"
-}
 
-# Generate distinct colors for all classes
-def generate_class_colors():
-    """Generate visually distinct colors for all 80 classes"""
-    np.random.seed(42)  # For consistent colors
-    colors = {}
-    for class_id, class_name in ALL_YOLO_CLASSES.items():
-        colors[class_name] = tuple(np.random.randint(50, 255, 3).tolist())
-    return colors
-
-CLASS_COLORS = generate_class_colors()
-
-
-
-
-# ─── Detection with filtering ──────────────────────────────────────────────────
+# ─── Detection ────────────────────────────────────────────────────────────────
 _frame_counter = 0
 FACE_REC_EVERY_N_FRAMES = 15
 
 def process_frame(
-    frame_bgr: np.ndarray, 
+    frame_bgr: np.ndarray,
     conf_threshold: float = 0.40,
     class_filter: Optional[List[str]] = None,
     frame_num: int = 0
 ):
     """
-    Process frame with YOLO detection.
-    Only detect classes specified in class_filter.
-    If class_filter is None or empty, detect nothing.
-    Face recognition is applied ONLY to 'person' class detections.
+    Process a frame with YOLOE text-prompt detection.
+
+    class_filter  – list of free-text class names, e.g. ["person", "tiger", "phone"].
+                    ANY natural-language label is valid; YOLOE handles it via CLIP embeddings.
+    If class_filter is None or empty, the original frame is returned untouched.
+    Face recognition is applied ONLY when 'person' (or similar) is among the detected labels.
     """
     labels_found = []
-    
-    if state.yolo_model is None:
+
+    if state.yoloe_model is None:
         return frame_bgr, labels_found
-    
-    # If no filter specified, return original frame
+
     if not class_filter:
         return frame_bgr, labels_found
-    
-    # Convert class names to IDs
-    filter_ids = set()
-    for class_name in class_filter:
-        for cid, cname in ALL_YOLO_CLASSES.items():
-            if cname.lower() == class_name.lower():
-                filter_ids.add(cid)
-                break
-    
-    if not filter_ids:
+
+    # ── Reconfigure model for requested classes (cached) ──────────────────
+    try:
+        _configure_model_for_classes(class_filter)
+    except Exception as e:
+        logger.error(f"set_classes error: {e}")
         return frame_bgr, labels_found
-    
-    # Downscale for faster inference
+
+    # ── Downscale for faster inference ────────────────────────────────────
     INFER_SCALE = 0.35
     h_orig, w_orig = frame_bgr.shape[:2]
     small = cv2.resize(frame_bgr, (int(w_orig * INFER_SCALE), int(h_orig * INFER_SCALE)))
 
     try:
-        results = state.yolo_model(small, conf=conf_threshold, verbose=False)[0]
+        results = state.yoloe_model(small, conf=conf_threshold, verbose=False)[0]
     except Exception as e:
-        logger.error(f"YOLO inference error: {e}")
+        logger.error(f"YOLOE inference error: {e}")
         return frame_bgr, labels_found
 
+    # ── Draw detections ───────────────────────────────────────────────────
     for box in results.boxes:
         cls_id = int(box.cls[0])
-        
-        # Filter: only process if class is in filter
-        if cls_id not in filter_ids:
-            continue
-        
-        if cls_id not in ALL_YOLO_CLASSES:
-            continue
+        conf   = float(box.conf[0])
 
-        conf = float(box.conf[0])
-        label = ALL_YOLO_CLASSES[cls_id]
-        color = CLASS_COLORS.get(label, (200, 200, 200))
+        # YOLOE names() returns the class list set via set_classes()
+        try:
+            label = results.names[cls_id]
+        except (KeyError, IndexError):
+            label = class_filter[cls_id] if cls_id < len(class_filter) else "unknown"
 
-        # Scale bounding box coords back to original frame size
+        color = get_class_color(label)
+
+        # Scale bounding box back to original size
         x1, y1, x2, y2 = map(int, box.xyxy[0])
         x1 = int(x1 / INFER_SCALE); y1 = int(y1 / INFER_SCALE)
         x2 = int(x2 / INFER_SCALE); y2 = int(y2 / INFER_SCALE)
@@ -255,9 +253,10 @@ def process_frame(
         cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), color, 2)
         display_name = label
 
-        # ── Face recognition: ONLY for "person" class, every N frames ─────
+        # ── Face recognition: for any "person"-like label ─────────────────
         run_face_rec = (frame_num % FACE_REC_EVERY_N_FRAMES == 0)
-        if label == "person" and state.fr_module and state.face_db and run_face_rec:
+        person_labels = {"person", "human", "man", "woman", "boy", "girl", "face"}
+        if label.lower() in person_labels and state.fr_module and state.face_db and run_face_rec:
             try:
                 h, w = frame_bgr.shape[:2]
                 frame_rgb_orig = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
@@ -279,7 +278,7 @@ def process_frame(
                                     display_name = known_names[best]
             except Exception as e:
                 logger.debug(f"Face recognition error: {e}")
-        
+
         tag = f"{display_name} {conf:.0%}"
         (tw, th), _ = cv2.getTextSize(tag, cv2.FONT_HERSHEY_DUPLEX, 0.55, 1)
         cv2.rectangle(frame_bgr, (x1, y1 - th - 8), (x1 + tw + 6, y1), color, -1)
@@ -294,49 +293,36 @@ def process_frame(
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    html_path = Path(__file__).parent / "templates" / "index2.html"
+    html_path = Path(__file__).parent / "templates" / "index2_V2.html"
     return html_path.read_text(encoding="utf-8")
 
 
 @app.get("/api/status")
 async def get_status():
-    """Return system status and all available classes"""
+    """Return system status."""
     return {
-        "yolo": state.yolo_model is not None,
+        "yoloe": state.yoloe_model is not None,
         "face_recognition": state.fr_module is not None,
         "known_faces": list(state.face_db.keys()),
         "models_loaded": state.models_loaded,
         "error": state.load_error or None,
-        "all_classes": ALL_YOLO_CLASSES,
-        "class_colors": CLASS_COLORS,
-        "total_classes": len(ALL_YOLO_CLASSES)
+        "current_classes": state._current_classes,
+        "note": "YOLOE accepts ANY free-text class name via text prompting (no fixed class list)."
     }
-
-
-@app.get("/api/classes")
-async def get_all_classes():
-    """Return all 80 YOLO classes in JSON format"""
-    return {
-        "classes": ALL_YOLO_CLASSES,
-        "colors": CLASS_COLORS,
-        "total": len(ALL_YOLO_CLASSES)
-    }
-
-
-class DetectionRequest(BaseModel):
-    classes: List[str]
 
 
 @app.post("/api/detect/image")
 async def detect_image(
     file: UploadFile = File(...),
     conf: float = Form(0.40),
-    classes: str = Form("")  # Comma-separated class names
+    classes: str = Form("")   # Comma-separated free-text class names
 ):
-    """Detect only specified classes in an uploaded image."""
-    # Parse classes
+    """
+    Detect objects matching free-text class names in an uploaded image.
+    Example classes: "person, dog, red car, coffee cup"
+    """
     class_filter = [c.strip() for c in classes.split(",") if c.strip()] if classes else []
-    
+
     contents = await file.read()
     img_pil = Image.open(io.BytesIO(contents)).convert("RGB")
     img_bgr = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
@@ -349,19 +335,19 @@ async def detect_image(
         "image": f"data:image/jpeg;base64,{b64}",
         "labels": labels,
         "unique": list(set(labels)),
-        "filtered_classes": class_filter
+        "prompted_classes": class_filter
     }
 
 
 @app.post("/api/detect/video")
 async def detect_video(
-    file: UploadFile = File(...), 
+    file: UploadFile = File(...),
     conf: float = Form(0.40),
     classes: str = Form("")
 ):
-    """Process an uploaded video, detecting only specified classes."""
+    """Process an uploaded video with YOLOE text-prompt detection."""
     class_filter = [c.strip() for c in classes.split(",") if c.strip()] if classes else []
-    
+
     suffix = Path(file.filename).suffix or ".mp4"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_in:
         tmp_in.write(await file.read())
@@ -396,7 +382,6 @@ async def detect_video(
         media_type="video/mp4",
         filename="annotated_video.mp4",
         headers={"X-Detections": ",".join(sorted(all_labels))},
-        background=None,
     )
 
 
@@ -441,8 +426,10 @@ async def delete_face(name: str):
 @app.websocket("/ws/detect")
 async def websocket_detect(websocket: WebSocket):
     """
-    Client sends: {"frame": <base64_jpeg>, "classes": ["person", "car"]}
-    Server responds: {"image": <base64_jpeg>, "labels": [...]}
+    Client sends: {"frame": <base64_jpeg>, "classes": ["phone", "tiger", "red car"]}
+    Server responds: {"image": <base64_jpeg>, "labels": [...], "unique": [...]}
+
+    classes accepts ANY free-text prompts — no fixed vocabulary required.
     """
     global _frame_counter
     await websocket.accept()
@@ -451,38 +438,34 @@ async def websocket_detect(websocket: WebSocket):
     try:
         loop = asyncio.get_event_loop()
         while True:
-            # Receive JSON with frame and class filter
             data = await websocket.receive_json()
-            
-            frame_b64 = data.get("frame", "")
+
+            frame_b64   = data.get("frame", "")
             class_filter = data.get("classes", [])
-            conf = data.get("conf", 0.40)
-            
-            # Decode frame
+            conf        = data.get("conf", 0.40)
+
             if "," in frame_b64:
                 frame_b64 = frame_b64.split(",")[1]
-            
-            img_data = base64.b64decode(frame_b64)
-            np_arr = np.frombuffer(img_data, np.uint8)
+
+            img_data  = base64.b64decode(frame_b64)
+            np_arr    = np.frombuffer(img_data, np.uint8)
             frame_bgr = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-            
+
             if frame_bgr is None:
                 await websocket.send_json({"error": "invalid frame"})
                 continue
 
             _frame_counter += 1
 
-            # Run inference
             annotated, labels = await loop.run_in_executor(
-                _executor, 
-                process_frame, 
-                frame_bgr, 
+                _executor,
+                process_frame,
+                frame_bgr,
                 conf,
                 class_filter,
                 _frame_counter
             )
 
-            # Encode response
             _, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 70])
             b64 = base64.b64encode(buf).decode()
 
@@ -499,8 +482,8 @@ async def websocket_detect(websocket: WebSocket):
     finally:
         logger.info("WebSocket handler cleaned up")
 
-
 # ─── Entry point ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("allclass:app", host="0.0.0.0", port=8001, reload=False)
+    uvicorn.run("allclass_V2:app", host="0.0.0.0", port=8001, reload=False)
+    # uvicorn.run("allclass_V2:app", reload=False)

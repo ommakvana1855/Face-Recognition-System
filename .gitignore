@@ -207,7 +207,7 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-
+/sam3
 yolov8m.pt
 yolov8x.pt
 yolov8n.pt
@@ -215,4 +215,6 @@ yolov8s.pt
 yolov8x.cache
 yolov8x.engine
 yolov8x.onnx
-yolov26x.pt
+yolo26x.pt
+yolo26x.cache
+yolo26x.engine
